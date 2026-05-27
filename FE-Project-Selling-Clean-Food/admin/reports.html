@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Báo cáo & Thống kê - FreshQAL Admin</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="../fontawesome-free-6.6.0-web/css/all.css">
+    <style>
+        .charts-row {
+            display: grid;
+            /* grid-template-columns: 1fr 1fr; */
+            gap: 20px;
+            margin-bottom: 28px;
+        }
+        .bar-item .bar {
+            height: 0;
+        }
+        .bar-item .bar.animate {
+            transition: height 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .donut-chart {
+            animation: donutSpin 1s ease forwards;
+        }
+        @keyframes donutSpin {
+            from { transform: rotate(-90deg); opacity: 0; }
+            to { transform: rotate(0deg); opacity: 1; }
+        }
+        .stat-card {
+            animation: fadeInUp 0.5s ease backwards;
+        }
+        .stat-card:nth-child(1) { animation-delay: 0.05s; }
+        .stat-card:nth-child(2) { animation-delay: 0.1s; }
+        .stat-card:nth-child(3) { animation-delay: 0.15s; }
+        .stat-card:nth-child(4) { animation-delay: 0.2s; }
+        .topbar-filter {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .topbar-filter select {
+            padding: 8px 16px;
+            border: 2px solid var(--border);
+            border-radius: 50px;
+            font-family: var(--font);
+            font-size: 0.9rem;
+            outline: none;
+            cursor: pointer;
+            transition: var(--transition);
+            background: white;
+        }
+        .topbar-filter select:focus {
+            border-color: var(--primary);
+        }
+        .export-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 22px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            color: white;
+            border: none;
+            border-radius: 50px;
+            font-family: var(--font);
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            box-shadow: 0 4px 15px rgba(46,125,50,0.3);
+        }
+        .export-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 25px rgba(46,125,50,0.4);
+        }
+        .revenue-chart-container {
+            margin-bottom: 28px;
+        }
+        .category-bar .bar {
+            background: linear-gradient(180deg, var(--accent), var(--accent-light)) !important;
+        }
+        @media (max-width: 768px) {
+            .charts-row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-layout" id="app">
+        <div id="sidebarContainer"></div>
+        <div class="main-content">
+            <div class="topbar">
+                <h2><span style="color: #2e7d32; background-color: #e8f5ea; padding: 6px 10px; border-radius: 6px; display: inline-flex; align-items: center; margin-right: 8px;"><i class="fa-solid fa-chart-pie"></i></span>  Báo cáo & Thống kê</h2>
+                <div class="topbar-actions">
+                    <div class="topbar-filter">
+                        <span style="font-size:0.9rem;color:var(--text-secondary);">📅 Thời gian:</span>
+                        <select id="dateFilter" onchange="applyFilter()">
+                            <option value="">Chọn bộ lọc</option>
+                            <option value="1">Theo Năm</option>
+                            <option value="0">Theo Tháng trong Năm</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-grid" id="statsGrid"></div>
+
+            <div class="chart-container revenue-chart-container">
+                <div class="chart-header">
+                    <h3>Biểu đồ doanh thu</h3>
+                    <span class="text-muted" style="font-size:0.85rem; color: #1b5e20 !important; font-weight: 700; padding: 5px 10px; border-radius: 20px; background-color: #81c784;" id="chartPeriodLabel"></span>
+                </div>
+                <div class="bar-chart" id="revenueChart" style="height:280px;"></div>
+            </div>
+
+            <div class="charts-row">
+                <div class="chart-container">
+                    <div class="chart-header">
+                        <h3>Phân bố trạng thái đơn hàng</h3>
+                    </div>
+                    <div id="orderStatusChart" style="padding:10px 0;"></div>
+                </div>
+            </div>
+
+            <div class="data-card">
+                <div class="data-card-header">
+                    <h3> Chi tiết doanh thu</h3>
+                    <button class="export-btn" onclick="exportCSV()">
+                        <i class="fa-solid fa-arrow-up-right-from-square"></i> Xuất báo cáo
+                    </button>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Ngày</th>
+                                <th>Số đơn hàng</th>
+                                <th>Doanh thu</th>
+                            </tr>
+                        </thead>
+                        <tbody id="revenueTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../js/data.js"></script>
+    <script src="../js/components.js"></script>
+    <script src="../js/app.js"></script>
+    <script>
+    let filteredOrders = [];
+    let reportData = [];
+
+    (function() {
+        const user = requireRole(['admin']);
+        if (!user) return;
+        document.getElementById('sidebarContainer').innerHTML = renderSidebar('admin', 'reports');
+        applyFilter();
+    })();
+
+    async function getFilteredOrders(filter) {
+        const orders = await getOrders();
+        const now = new Date();
+        const todayStr = now.toISOString().split('T')[0];
+
+        switch(filter) {
+            case 'today':
+                return orders.filter(o => o.order_date.split('T')[0] === todayStr);
+            case '7days': {
+                const from = new Date(now);
+                from.setDate(from.getDate() - 6);
+                from.setHours(0,0,0,0);
+                return orders.filter(o => new Date(o.order_date) >= from);
+            }
+            case '30days': {
+                const from = new Date(now);
+                from.setDate(from.getDate() - 29);
+                from.setHours(0,0,0,0);
+                return orders.filter(o => new Date(o.order_date) >= from);
+            }
+            default:
+                return orders;
+        }
+    }
+
+    async function applyFilter() {
+        const filter = document.getElementById('dateFilter').value;
+        filteredOrders = await getFilteredOrders(filter);
+        const allOrders = await getOrders();
+        const products = await getProducts();
+        const categories = await getCategories();
+        console.log('Đơn hàng đã lọc:', filteredOrders);
+
+        const resolved = filteredOrders.filter(o => o.order_status == 'pending');
+        const totalRevenue = resolved.reduce((s, o) => s + o.total_amount, 0);
+        const avgOrder = filteredOrders.length > 0 ? Math.round(totalRevenue / (resolved.length || 1)) : 0;
+
+        const totalProductsSold = filteredOrders.reduce((s, o) =>
+            s + o.detailOrderItems.reduce((si, item) => si + item.quantity, 0), 0);
+
+        document.getElementById('statsGrid').innerHTML = `
+            <div class="stat-card blue">
+                <div class="stat-icon"><i class="fa-solid fa-coins"></i></div>
+                <div class="stat-info">
+                    <h4>Doanh thu</h4>
+                    <div class="stat-number">${formatPrice(totalRevenue)}</div>
+                </div>
+            </div>
+            <div class="stat-card orange">
+                <div class="stat-icon"><i class="fa-solid fa-table-list"></i></div>
+                <div class="stat-info">
+                    <h4>Số đơn hàng</h4>
+                    <div class="stat-number">${filteredOrders.length}</div>
+                </div>
+            </div>
+            <div class="stat-card green">
+                <div class="stat-icon"><i class="fa-solid fa-hand-holding-dollar"></i></i></div>
+                <div class="stat-info">
+                    <h4>Giá trị TB / đơn</h4>
+                    <div class="stat-number">${formatPrice(avgOrder)}</div>
+                </div>
+            </div>
+            <div class="stat-card red">
+                <div class="stat-icon"><i class="fa-solid fa-box"></i></div>
+                <div class="stat-info">
+                    <h4>Sản phẩm đã bán</h4>
+                    <div class="stat-number">${totalProductsSold}</div>
+                </div>
+            </div>
+        `;
+
+        // Gọi renderRevenueChart với option: "1" = theo năm, "0" = theo tháng
+        const chartOption = filter === '1' ? '1' : '0';
+        renderRevenueChart(chartOption);
+        renderStatusDonut();
+        // renderCategoryChart(products, categories);
+        await renderRevenueTable(filter);
+    }
+
+    /**
+     * Fetch doanh thu theo tháng/năm từ API
+     * @param {string} option - '1' = theo năm, '0' = theo tháng
+     * @returns {Promise<Array>} Mảng {thang, total_amount_month}
+     */
+    async function getRevenueByMonthYear(option) {
+        try {
+            const response = await fetch(
+                `https://localhost:7128/api/Orders/Orders/RevenueByMonthCurrentYear?option=${option}`,
+                {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                    }
+                }
+            );
+
+            if (!response.ok) {
+                console.error(`API Error: ${response.status} ${response.statusText}`);
+                showToast('Lỗi khi tải dữ liệu biểu đồ!', 'error');
+                return [];
+            }
+
+            const data = await response.json();
+            return Array.isArray(data) ? data : [];
+        } catch (error) {
+            console.error('Error fetching revenue chart data:', error);
+            showToast('Lỗi khi kết nối API!', 'error');
+            return [];
+        }
+    }
+
+    /**
+     * Render biểu đồ doanh thu từ API
+     * @param {string} option - '1' = theo năm, '0' = theo tháng
+     */
+    async function renderRevenueChart(option) {
+        try {
+            // Fetch dữ liệu từ API mới
+            const chartData = await getRevenueByMonthYear(option);
+
+            if (!chartData || chartData.length === 0) {
+                document.getElementById('revenueChart').innerHTML = 
+                    '<div style="padding:40px; text-align:center; color:#999;">Không có dữ liệu doanh thu</div>';
+                document.getElementById('chartPeriodLabel').textContent = '';
+                return;
+            }
+
+            // Determine period label based on option
+            const periodLabel = option === '1' ? 'Doanh thu theo năm' : 'Doanh thu theo tháng';
+            document.getElementById('chartPeriodLabel').textContent = periodLabel;
+
+            // Mapping dữ liệu từ API
+            const processedData = chartData.map(item => ({
+                thang: item.thang,
+                revenue: item.total_amount_month || 0,
+                label: option === '1' 
+                    ? `Năm ${item.thang}` 
+                    : `Tháng ${String(item.thang).padStart(2, '0')}`
+            }));
+
+            // Tính giá trị max để normalize chiều cao cột
+            const maxRevenue = Math.max(...processedData.map(d => d.revenue), 1);
+
+            // Render biểu đồ
+            document.getElementById('revenueChart').innerHTML = processedData
+                .map(item => {
+                    const pct = item.revenue / 10000;
+                    const displayValue = item.revenue > 0 ? formatPrice(item.revenue) : '0đ';
+                    
+                    return `<div class="bar-item">
+                        <div class="bar-value">${displayValue}</div>
+                        <div class="bar" data-height="${pct}px" style="height:0;"></div>
+                        <div class="bar-label">${item.label}</div>
+                    </div>`;
+                })
+                .join('');
+
+            // Animate bars
+            animateBars('#revenueChart');
+
+        } catch (error) {
+            console.error('Error in renderRevenueChart:', error);
+            showToast('Lỗi hiển thị biểu đồ!', 'error');
+        }
+    }
+
+    function renderStatusDonut() {
+        const statusCounts = {
+            pending: filteredOrders.filter(o => o.order_status === 'pending').length,
+            approve: filteredOrders.filter(o => o.order_status === 'approve').length,
+            resolve: filteredOrders.filter(o => o.order_status === 'resolve').length,
+            reject: filteredOrders.filter(o => o.order_status === 'reject').length
+        };
+        const total = filteredOrders.length || 1;
+        const colors = { pending: '#F9A825', approve: '#1565C0', resolve: '#2E7D32', reject: '#E53935' };
+        const labels = { pending: 'Chờ xác nhận', approve: 'Đã xác nhận', resolve: 'Đã giao', reject: 'Đã hủy' };
+
+        let parts = [];
+        let cum = 0;
+        for (const [s, c] of Object.entries(statusCounts)) {
+            if (c === 0) continue;
+            const pct = (c / total) * 100;
+            parts.push(`${colors[s]} ${cum}% ${cum + pct}%`);
+            cum += pct;
+        }
+        const grad = parts.length > 0
+            ? `conic-gradient(${parts.join(', ')})`
+            : 'conic-gradient(#e0e0e0 0% 100%)';
+
+        document.getElementById('orderStatusChart').innerHTML = `
+            <div class="donut-chart" style="background:${grad};">
+                <div class="donut-center">
+                    <div class="donut-value">${filteredOrders.length}</div>
+                    <div class="donut-label">Đơn hàng</div>
+                </div>
+            </div>
+            <div class="chart-legend">
+                ${Object.entries(statusCounts).map(([s, c]) => `
+                    <div class="legend-item">
+                        <div class="legend-color" style="background:${colors[s]};"></div>
+                        <span>${labels[s]}: ${c} (${total > 0 ? Math.round((c/total)*100) : 0}%)</span>
+                    </div>`).join('')}
+            </div>`;
+    }s
+
+    /**
+     * Fetch doanh thu theo ngày trong tháng hiện tại từ API
+     */
+    async function getRevenueByDayCurrentMonth() {
+        try {
+            const response = await fetch('https://localhost:7128/api/Orders/Orders/RevenueByDayCurrentMonth', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                }
+            });
+
+            if (!response.ok) {
+                console.error(`API Error: ${response.status} ${response.statusText}`);
+                return [];
+            }
+
+            const data = await response.json();
+            return Array.isArray(data) ? data : [];
+        } catch (error) {
+            console.error('Error fetching revenue data:', error);
+            showToast('Lỗi khi tải dữ liệu doanh thu!', 'error');
+            return [];
+        }
+    }
+
+    /**
+     * Render bảng doanh thu từ API data
+     */
+    async function renderRevenueTable(filter) {
+        try {
+            // Fetch dữ liệu từ API
+            const apiData = await getRevenueByDayCurrentMonth();
+
+            if (!apiData || apiData.length === 0) {
+                document.getElementById('revenueTable').innerHTML = 
+                    '<tr><td colspan="4" class="text-center text-muted" style="padding:30px">Không có dữ liệu doanh thu</td></tr>';
+                reportData = [];
+                return;
+            }
+
+            // Mapping dữ liệu từ API response
+            reportData = apiData.map(item => {
+                const dateObj = new Date(item.day + 'T00:00:00');
+                return {
+                    date: item.day,
+                    dateFormatted: formatDate(dateObj.toISOString()),
+                    orders: item.sodonhang || 0,
+                    revenue: item.total_amount || 0,
+                    avg: item.sodonhang > 0 ? Math.round((item.total_amount || 0) / item.sodonhang) : 0
+                };
+            });
+
+            // Tính tổng cộng
+            const totalOrders = reportData.reduce((sum, r) => sum + r.orders, 0);
+            const totalRevenue = reportData.reduce((sum, r) => sum + r.revenue, 0);
+
+            // Render bảng với dữ liệu
+            const tableRows = reportData
+                .filter(r => r.orders > 0) // Chỉ hiển thị những ngày có đơn hàng
+                .map(r => `
+                <tr>
+                    <td><strong>${r.dateFormatted}</strong></td>
+                    <td>${r.orders}</td>
+                    <td class="text-accent fw-bold">${formatPrice(r.revenue)}</td>
+                </tr>`)
+                .join('');
+
+            // Thêm dòng tổng cộng
+            const totalRow = `
+                <tr style="background: #f5f5f5; border-top: 2px solid var(--border);">
+                    <td><strong>TỔNG CỘNG</strong></td>
+                    <td><strong>${totalOrders}</strong></td>
+                    <td class="text-accent"><strong>${formatPrice(totalRevenue)}</strong></td>
+                </tr>`;
+
+            document.getElementById('revenueTable').innerHTML = tableRows + totalRow;
+
+        } catch (error) {
+            console.error('Error rendering revenue table:', error);
+            showToast('Lỗi khi render bảng doanh thu!', 'error');
+        }
+    }
+
+    function animateBars(selector) {
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                document.querySelectorAll(`${selector} .bar`).forEach(bar => {
+                    bar.classList.add('animate');
+                    bar.style.height = bar.dataset.height;
+                });
+            }, 100);
+        });
+    }
+
+    function exportCSV() {
+        if (!reportData || reportData.length === 0) {
+            showToast('Không có dữ liệu để xuất!', 'warning');
+            return;
+        }
+
+        const BOM = '\uFEFF';
+        const headers = ['Ngày', 'Số đơn hàng', 'Doanh thu (VNĐ)', 'TB/đơn (VNĐ)'];
+        const rows = reportData
+            .filter(r => r.orders > 0)
+            .map(r => [r.dateFormatted, r.orders, r.revenue, r.avg]);
+
+        if (rows.length === 0) {
+            showToast('Không có dữ liệu để xuất!', 'warning');
+            return;
+        }
+
+        const totalRevenue = rows.reduce((s, r) => s + r[2], 0);
+        const totalOrders = rows.reduce((s, r) => s + r[1], 0);
+        rows.push(['TỔNG CỘNG', totalOrders, totalRevenue, totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0]);
+
+        const csvContent = BOM + [headers, ...rows].map(row => row.join(',')).join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        const filter = document.getElementById('dateFilter').value;
+        const filterLabels = { today: 'hom-nay', '7days': '7-ngay', '30days': '30-ngay', all: 'tat-ca' };
+        link.download = `bao-cao-doanh-thu-${filterLabels[filter]}-${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showToast('Đã xuất báo cáo CSV thành công!', 'success');
+    }
+    </script>
+</body>
+</html>

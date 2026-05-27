@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quản lý danh mục - FreshQAL Staff</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="../fontawesome-free-6.6.0-web/css/all.css">
+
+</head>
+<body>
+    <div class="admin-layout" id="app">
+        <div id="sidebarContainer"></div>
+        <div class="main-content">
+            <div class="topbar">
+                <h2><span style="color: #1565c0; background-color: #e3f2fd; padding: 6px 10px; border-radius: 6px; display: inline-flex; align-items: center; margin-right: 8px;"><i class="fa-solid fa-folder"></i></span> Quản lý danh mục</h2>
+                <div class="topbar-actions">
+                    <button class="btn btn-primary btn-sm" onclick="openAddCategory()"><i class="fa-solid fa-plus"></i> Thêm danh mục</button>
+                </div>
+            </div>
+
+            <div class="data-card">
+                <div class="data-card-header">
+                    <h3>Danh sách danh mục</h3>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Tên danh mục</th>
+                            <th>Mô tả</th>
+                            <th>Thao tác</th>
+                        </tr>
+                    </thead>
+                    <tbody id="categoryTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="categoryModal">
+        <div class="modal" style="max-width:500px;">
+            <div class="modal-header">
+                <h3 id="modalTitle">Thêm danh mục</h3>
+                <button class="modal-close" onclick="closeModal('categoryModal')">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editId">
+                <div class="form-group">
+                    <label>Tên danh mục</label>
+                    <input type="text" class="form-control" id="fName" placeholder="Nhập tên danh mục">
+                </div>
+                <div class="form-group">
+                    <label>Mô tả</label>
+                    <textarea class="form-control" id="fDesc" rows="3" placeholder="Mô tả danh mục"></textarea>
+                </div>
+                <div class="form-group">
+
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('categoryModal')">Hủy</button>
+                <button class="btn btn-primary" onclick="saveCategory(document.getElementById('modalTitle').textContent.includes('Sửa') ? document.getElementById('editId').value : null)">Lưu danh mục</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="../js/data.js"></script>
+    <script src="../js/components.js"></script>
+    <script src="../js/app.js"></script>
+    <script>
+    (async function initPage() {
+        const user = requireRole(['staff', 'admin']);
+        if (!user) return;
+        await preloadData();
+        let qal = localStorage.getItem("id_current_user");
+        let qal1 =  await getUserById(qal);
+        document.getElementById('sidebarContainer').innerHTML = renderSidebar(qal1.role, 'categories');
+        renderCategories();
+    })();
+
+    async function renderCategories() {
+        const categories = getCategories();
+        const products = await getProducts();
+        document.getElementById('categoryTableBody').innerHTML = categories.length
+            ? categories.map(c => {
+                const productCount = products.filter(p => p.category_id === c.id).length;
+                return `<tr>
+                    <td><strong>${c.id}</strong></td>
+                    <td><strong>${c.name}</strong></td>
+                    <td style="color:var(--text-secondary);">${c.description}</td>
+                    <td>
+                        <div class="table-actions">
+                            <button class="btn-edit" onclick="editCategory(${c.id})" title="Sửa"><i class="fa-solid fa-pen"></i></button>
+                            <button class="btn-delete" onclick="deleteCategory(${c.id})" title="Xóa"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('')
+            : '<tr><td colspan="6" class="text-center text-muted" style="padding:40px">Chưa có danh mục nào</td></tr>';
+    }
+
+    function openAddCategory() {
+        document.getElementById('modalTitle').textContent = 'Thêm danh mục mới';
+        document.getElementById('editId').value = '';
+        document.getElementById('fName').value = '';
+        document.getElementById('fDesc').value = '';
+        openModal('categoryModal');
+    }
+
+    function editCategory(id) {
+        const c = getCategoryById(id);
+        if (!c) return;
+        document.getElementById('modalTitle').textContent = 'Sửa danh mục';
+        document.getElementById('editId').value = c.id;
+        document.getElementById('fName').value = c.name;
+        document.getElementById('fDesc').value = c.description;
+        openModal('categoryModal');
+    }
+
+    async function saveCategory(editId = null) {
+        const name = document.getElementById('fName').value.trim();
+        const description = document.getElementById('fDesc').value.trim();
+
+        if (!name) {
+            showToast('Vui lòng nhập tên danh mục!', 'error');
+            return;
+        }
+
+        const body = {
+            name,
+            description
+        };
+
+        const isEdit = editId !== null;
+
+        const url = isEdit
+            ? `https://localhost:7128/api/DanhMucSP/ProductCategory/UpdateProductCategory?id=${editId}`
+            : 'https://localhost:7128/api/DanhMucSP/ProductCategory/Addnew';
+        console.log("url la : ",url);
+        const method = isEdit ? 'PUT' : 'POST';
+
+        const successMsg = isEdit
+            ? 'Cập nhật danh mục thành công!'
+            : 'Thêm danh mục mới thành công!';
+
+        try {
+            const res = await fetch(url, {
+                method,
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body)
+            });
+
+            if (!res.ok) {
+                const err = await res.text();
+                showToast(`Lỗi: ${err || res.status}`, 'error');
+                return;
+            }
+
+            if(method === 'POST') {
+                const idnew = await res.json();
+                document.getElementById('categoryTableBody').insertAdjacentHTML('beforeend', `<tr>
+                    <td><strong>${idnew}</strong></td>
+                    <td><strong>${name}</strong></td>
+                    <td style="color:var(--text-secondary);">${description}</td>
+                    <td>
+                        <div class="table-actions">
+                            <button class="btn-edit" onclick="editCategory(${idnew})" title="Sửa"><i class="fa-solid fa-pen"></i></button>
+                            <button class="btn-delete" onclick="deleteCategory(${idnew})" title="Xóa"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </td>
+                </tr>`);
+
+            } else {
+                document.querySelectorAll('#categoryTableBody tr').forEach(row => {
+                    const idCell = row.querySelector('td:first-child strong');
+                    if (idCell && idCell.textContent == editId) {
+                        row.children[1].querySelector('strong').textContent = name;
+                        row.children[2].textContent = description;
+                    }
+                });
+            }
+            showToast(successMsg, 'success');
+
+            closeModal('categoryModal');
+
+            // Luôn load lại dữ liệu thật từ backend
+            // await renderCategories();
+
+        } catch (e) {
+            console.error(e);
+            showToast('Có lỗi xảy ra khi kết nối API!', 'error');
+        }
+    }
+
+    async function deleteCategory(id) {
+        const c = getCategoryById(id);
+        if (!c) return;
+        const productCount = await getProducts().then(products => products.filter(p => p.category_id === id).length);
+        if (productCount > 0) {
+            showToast(`Không thể xóa! Danh mục "${c.name}" đang có ${productCount} sản phẩm.`, 'error');
+            return;
+        }
+        if (!confirm(`Bạn có chắc muốn xóa danh mục "${c.name}"?`)) return;
+
+        try {
+            const res = await fetch(`https://localhost:7128/api/DanhMucSP/ProductCategory/DeleteProductCategory?id=${id}`, {
+                method: 'DELETE',
+            });
+            if (!res.ok) {
+                const err = await res.text();
+                showToast('Lỗi xóa danh mục: ' + (err || res.status), 'error');
+                return;
+            }
+            showToast('Đã xóa danh mục!', 'success');
+
+            // Xóa element khỏi FE không reload lại trang
+            const tableBody = document.getElementById('categoryTableBody');
+            const rows = tableBody.querySelectorAll('tr');
+            for (const row of rows) {
+                const idCell = row.querySelector('td:first-child strong');
+                if (idCell && idCell.textContent == id) {
+                    tableBody.removeChild(row);
+                    break;
+                }
+            }
+        } catch (e) {
+            showToast('Có lỗi xảy ra khi kết nối API!', 'error');
+        }
+    }
+    </script>
+</body>
+</html>

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quản lý đơn hàng - FreshQAL Staff</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="../fontawesome-free-6.6.0-web/css/all.css">
+
+</head>
+<body>
+    <div class="admin-layout" id="app">
+        <div id="sidebarContainer"></div>
+        <div class="main-content">
+            <div class="topbar">
+                <h2><span style="color: #c62828; background-color: #ffebee; padding: 6px 10px; border-radius: 6px; display: inline-flex; align-items: center; margin-right: 8px;"><i class="fa-solid fa-box"></i></span> Quản lý đơn hàng</h2>
+                <div class="topbar-actions">
+                    <input type="text" class="search-input" id="searchInput" placeholder="Tìm mã ĐH, khách hàng..." oninput="renderOrders()" style="border:2px solid var(--border);border-radius:50px;padding:8px 16px;font-family:var(--font);font-size:0.9rem; width: 220px;">
+                </div>
+            </div>
+
+            <div class="order-tabs" id="orderTabs">
+                <button class="order-tab active" onclick="filterByStatus('all')">Tất cả</button>
+                <button class="order-tab" onclick="filterByStatus('pending')"><i class="fa-solid fa-hourglass-half"></i> Chờ xác nhận</button>
+                <button class="order-tab" onclick="filterByStatus('approve')"><i class="fa-solid fa-check"></i> Đã xác nhận</button>
+                <button class="order-tab" onclick="filterByStatus('resolve')"><i class="fa-solid fa-box"></i> Đã giao</button>
+                <button class="order-tab" onclick="filterByStatus('reject')"><i class="fa-solid fa-xmark"></i> Đã hủy</button>
+            </div>
+
+            <div class="data-card">
+                <div class="data-card-header">
+                    <h3>Danh sách đơn đặt hàng</h3>
+                    <div class="data-card-tools">
+                        <input type="text" class="search-input" id="searchInput" placeholder=" Tìm kiếm đơn hàng..." oninput="renderOrders()">
+                    </div>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Mã ĐH</th>
+                            <th>Khách hàng</th>
+                            <th>Ngày đặt</th>
+                            <th>Tổng tiền</th>
+                            <th>Thanh toán</th>
+                            <th>Trạng thái</th>
+                            <th>Thao tác</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orderTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="orderDetailModal">
+        <div class="modal" style="max-width:620px;">
+            <div class="modal-header">
+                <h3 id="detailTitle">Chi tiết đơn hàng</h3>
+                <button class="modal-close" onclick="closeModal('orderDetailModal')">✕</button>
+            </div>
+            <div class="modal-body" id="orderDetailBody"></div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeModal('orderDetailModal')">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="../js/data.js"></script>
+    <script src="../js/components.js"></script>
+    <script src="../js/app.js"></script>
+    <script>
+    let currentStatus = 'all';
+    (async function initPage() {
+        const user = requireRole(['staff', 'admin']);
+        if (!user) return;
+        await preloadData();
+        let qal = localStorage.getItem("id_current_user");
+        let qal1 =  await getUserById(qal);
+        document.getElementById('sidebarContainer').innerHTML = renderSidebar(qal1.role, 'orders');
+        renderOrders();
+    })();
+
+    function filterByStatus(status) {
+        currentStatus = status;
+        document.querySelectorAll('.order-tab').forEach(tab => tab.classList.remove('active'));
+        event.target.classList.add('active');
+        renderOrders();
+    }
+
+    async function renderOrders() {
+        const keyword = document.getElementById('searchInput').value.toLowerCase();
+        let orders = await getOrders();
+        const users = await getUsers();
+        const products = await getProducts();
+
+        if (currentStatus !== 'all') {
+            orders = orders.filter(o => o.order_status === currentStatus);
+        }
+        if (keyword) {
+            orders = orders.filter(o => {
+                const customer = users.find(u => u.id === o.user_id);
+                return String(o.id).includes(keyword) ||
+                       (customer && customer.name.toLowerCase().includes(keyword)) ||
+                       (o.recipient_name && o.recipient_name.toLowerCase().includes(keyword));
+            });
+        }
+
+        orders.sort((a, b) => new Date(b.order_date) - new Date(a.order_date));
+
+        document.getElementById('orderTableBody').innerHTML = orders.length
+            ? orders.map(o => {
+                const customer = users.find(u => u.id === o.user_id);
+                const canApprove = o.order_status === 'pending' && canApproveOrder(o, products);
+                const insufficientStock = o.order_status === 'pending' && !canApprove;
+                return `<tr>
+                    <td><strong>#${o.id}</strong></td>
+                    <td>${customer ? customer.name : (o.recipient_name || 'N/A')}</td>
+                    <td>${formatDateTime(o.order_date)}</td>
+                    <td class="text-accent fw-bold">${formatPrice(o.total_amount)}</td>
+                    <td>
+                        <span style="font-size:0.82rem;padding:4px 10px;border-radius:20px;font-weight:600;
+                            ${o.payment_status === 'paid' || o.payment_status === 'resolve' ? 'background:var(--success-bg);color:var(--success);' : 'background:var(--warning-bg);color:var(--warning);'}">
+                            ${getPaymentStatusText(o.payment_status)}
+                        </span>
+                    </td>
+                    <td><span class="order-status status-${o.order_status}">${ getOrderStatusText(o.order_status)}</span></td>
+                    <td>
+                        <div class="table-actions">
+                            <button class="btn-view" onclick="viewOrder(${o.id})" title="Xem chi tiết"><i class="fa-solid fa-eye"></i></button>
+                            ${canApprove ? `
+                                <button class="btn-edit" onclick="updateOrderStatus(${o.id}, 'approve')" title="Xác nhận"><i class="fa-solid fa-check"></i></button>
+                                <button class="btn-delete" onclick="updateOrderStatus(${o.id}, 'reject')" title="Từ chối"><i class="fa-solid fa-xmark"></i></button>
+                            ` : ''}
+                            ${insufficientStock ? `
+                                <span style="font-size:0.75rem;padding:4px 10px;border-radius:20px;background:var(--danger-bg);color:var(--danger);font-weight:600;" title="Không đủ hàng để xác nhận">⚠️ Không đủ hàng</span>
+                            ` : ''}
+                            ${o.order_status === 'approve' ? `
+                                <button class="btn-edit" onclick="updateOrderStatus(${o.id}, 'resolve')" title="Đã giao"><i class="fa-solid fa-box"></i></button>
+                            ` : ''}
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('')
+            : '<tr><td colspan="7" class="text-center text-muted" style="padding:40px">Không tìm thấy đơn hàng</td></tr>';
+    }
+
+    function canApproveOrder(order, products) {
+        if (!order.detailOrderItems || order.detailOrderItems.length === 0) {
+            return true;
+        }
+        return order.detailOrderItems.every(item => {
+            const product = products.find(p => p.id === item.product_id);
+            return product && product.quantity >= item.quantity;
+        });
+    }
+
+
+    async function viewOrder(id) {
+        const orders = await getOrders();
+        console.log(orders);
+        const o = orders.find(ord => ord.id === id);
+        if (!o) return;
+        const customer = await getUserById(o.user_id);
+        console.log(customer);
+        console.log(o);
+        const itemsHtml = o.detailOrderItems.map(item => {
+            const p = getProductById(item.product_id);
+            console.log(p);
+            return `<div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px dashed var(--border);">
+                <img style="width:44px;height:44px;background:var(--primary-bg);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;" src="https://localhost:7128${item.product_image_url}" alt="Ảnh sản phẩm">
+                <div style="flex:1;">
+                    <div style="font-weight:600;">${item.product_name}</div>
+                    <div style="font-size:0.82rem;color:var(--text-light);">x${item.quantity} • ${formatPrice(item.unit_price)} / ${item.unit}</div>
+                </div>
+                <div style="font-weight:700;color:var(--accent);">${formatPrice(item.quantity * item.unit_price)}</div>
+            </div>`;
+        }).join('');
+
+        document.getElementById('detailTitle').textContent = `Chi tiết đơn hàng #${o.id}`;
+        document.getElementById('orderDetailBody').innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+                <div class="pd-spec">
+                    <span class="spec-icon"><i class="fa-solid fa-user"></i></span>
+                    <div>
+                        <div class="spec-label">Khách hàng</div>
+                        <div class="spec-value">${customer ? customer.name : o.recipient_name}</div>
+                    </div>
+                </div>
+                <div class="pd-spec">
+                    <span class="spec-icon"><i class="fa-solid fa-phone"></i></span>
+                    <div>
+                        <div class="spec-label">Điện thoại</div>
+                        <div class="spec-value">${o.phone }</div>
+                    </div>
+                </div>
+                <div class="pd-spec">
+                    <span class="spec-icon"><i class="fa-solid fa-calendar"></i></span>
+                    <div>
+                        <div class="spec-label">Ngày đặt</div>
+                        <div class="spec-value">${formatDateTime(o.order_date)}</div>
+                    </div>
+                </div>
+                <div class="pd-spec">
+                    <span class="spec-icon"><i class="fa-solid fa-credit-card"></i></span>
+                    <div>
+                        <div class="spec-label">Thanh toán</div>
+                        <div class="spec-value">${o.payment_method} - ${getPaymentStatusText(o.payment_status)}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="pd-spec" style="margin-bottom:20px;">
+                <span class="spec-icon"><i class="fa-solid fa-location-dot"></i></span>
+                <div>
+                    <div class="spec-label">Địa chỉ giao hàng</div>
+                    <div class="spec-value">${o.address || o.shipping_address || 'N/A'}</div>
+                </div>
+            </div>
+            ${o.note ? `<div class="pd-spec" style="margin-bottom:20px;">
+                <span class="spec-icon"><i class="fa-solid fa-square-envelope"></i></span>
+                <div>
+                    <div class="spec-label">Ghi chú</div>
+                    <div class="spec-value">${o.note}</div>
+                </div>
+            </div>` : ''}
+            <h4 style="margin-bottom:12px;">Sản phẩm đặt hàng</h4>
+            ${itemsHtml}
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 0;margin-top:8px;border-top:2px solid var(--primary);">
+                <strong style="font-size:1.1rem;">Tổng cộng</strong>
+                <strong style="font-size:1.3rem;color:var(--danger);">${formatPrice(o.total_amount)}</strong>
+            </div>
+            <div style="text-align:center;margin-top:8px;">
+                <span class="order-status status-${o.order_status}" style="font-size:0.95rem;padding:6px 20px;">${ getOrderStatusText(o.order_status)}</span>
+            </div>
+        `;
+        openModal('orderDetailModal');
+    }
+
+    async function updateOrderStatus(id, newStatus) {
+        const statusLabels = { approve: 'xác nhận', resolve: 'hoàn thành', reject: 'từ chối' };
+        
+        if (!confirm(`Bạn có chắc muốn ${statusLabels[newStatus]} đơn hàng #${id}?`)) {
+            return;
+        }
+
+        try {
+            let url = `https://localhost:7128/api/Orders/Update_status_order?orderId=${id}&order_status=${newStatus}`;
+            
+            const res = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            console.log(res);
+            if (!res.ok) {
+                const err = await res.text();
+                showToast(`Lỗi: ${err || 'Cập nhật đơn hàng thất bại'}`, 'error');
+                return;
+            }
+
+            showToast(`Đơn hàng #${id} đã được ${statusLabels[newStatus]}!`,statusLabels[newStatus] === 'từ chối' ? 'error' : 'success');
+            
+            // Reload page để cập nhật trạng thái và kiểm tra inventory lại
+            setTimeout(() => {
+                // window.location.reload();
+            }, 1000);
+            
+        } catch (error) {
+            console.error('Error updating order status:', error);
+            showToast('Lỗi kết nối: Vui lòng thử lại!', 'error');
+        }
+    }
+    </script>
+</body>
+</html>
